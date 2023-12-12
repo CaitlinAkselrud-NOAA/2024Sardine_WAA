@@ -1,11 +1,11 @@
-# Purpose: To run a series of triple separable models testing for evidence of
-# cohort/age/year effects for EBS pollock w/ conditional variance
+# Purpose: method for filling missing weight-at-age data in stock assessment, 
+#          incl cohort/age/year effects
 # Creator: Matthew LH. Cheng (UAF-CFOS)
 # Date 1/16/23
 # 
 # Modified: Caitlin Allen Akselrud 12.12.23
 # contact: caitlin.allen_akselrud@noaa.gov
-# Notes: set up for 2024 sardine benchmark assessment; run this code first
+# Notes: set up as main code to call functions in other files
 # Set up ------------------------------------------------------------------
 
 library(here)
@@ -50,7 +50,7 @@ waa_df <- waa_df_raw %>%
                           seas == 2 ~ number_yr + 0.5)) %>% 
   dplyr::filter(fleet > 0) %>% 
   dplyr::select_if(is.numeric) #remove columns with notes
-  
+
 
 waa_std_df <- waa_std_df_raw %>% 
   mutate(year = case_when(seas == 1 ~ number_yr + 0.0,
@@ -129,13 +129,13 @@ dat_setup_f4$Var_Param <- 0
 
 # Now, input these components into a data list
 data <- dat_setup_f4
-  # years
-  # ages
-  # X_at
-  # Xsd_at
-  # ay_Index
-  # n_proj_years # proj time: 2 seasons = 1 year in sardine mode
-  # Var_Param = 0) # Var_Param == 0 Conditional, == 1 Marginal
+# years
+# ages
+# X_at
+# Xsd_at
+# ay_Index
+# n_proj_years # proj time: 2 seasons = 1 year in sardine mode
+# Var_Param = 0) # Var_Param == 0 Conditional, == 1 Marginal
 
 # Input parameters into a list
 # CIA: need to adjust for sardine
@@ -185,7 +185,7 @@ for(n_fact in 1:nrow(map_factorial)) {
   } # end m loop
   
   map <- rlist::list.append(map, "ln_Linf" = factor(NA), 
-                                "ln_beta" = factor(NA))
+                            "ln_beta" = factor(NA))
   
   # Now, make AD model function
   waa_model <- MakeADFun(data = data, parameters = parameters,
