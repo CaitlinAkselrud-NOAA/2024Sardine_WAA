@@ -12,67 +12,131 @@ library(here)
 library(tidyverse)
 library(TMB)
 library(cowplot)
+library(janitor)
 
 # Compile and load in model
-setwd(here("src"))
-compile("GMRF_WAA.cpp")
-dyn.load(dynlib("GMRF_WAA"))
+wd <- here("src")
+compile(here("src","GMRF_WAA.cpp"))
+dyn.load(dynlib(here("src","GMRF_WAA")))
+
+# raw data
 
 # Load in WAA matrix (only use fishery data)
-waa_df <- read.csv(here("data", "ebs_waa.csv")) %>% 
-  filter(source == "fishery") %>% 
-  dplyr::select(-source)
+# waa_df <- read_csv(here("data", "ebs_waa.csv")) %>% 
+#   filter(source == "fishery") %>% 
+#   dplyr::select(-source)
+
+waa_df_raw <- read_csv(here("data", "2020_sardine_waa.csv")) %>% 
+  janitor::clean_names()
 
 # Load in std for WAA matrix
-waa_std_df <- read.csv(here("data", "ebs_waa_std.csv")) %>% 
-  filter(source == "fishery") %>% 
-  dplyr::select(-source)
+# waa_std_df <- read_csv(here("data", "ebs_waa_std.csv")) %>% 
+#   filter(source == "fishery") %>% 
+#   dplyr::select(-source)
+
+waa_std_df_raw <- read_csv(here("data", "2020_sardine_waa_std.csv")) %>% 
+  janitor::clean_names()
+# CIA: **DUMMY FILE, put in actual std devs**
+
+# clean data
+# CIA: adapt years here to be year_seas (2005.0, 2005.5, etc.
+
+# CIA: separate fleets
+# 1 = MexCal S1
+# 2 = MexCal S2
+# 3 = PNW
+# 4 = AT survey
+waa_df <- waa_df_raw %>% 
+  mutate(year = case_when(seas == 1 ~ number_yr + 0.0,
+                          seas == 2 ~ number_yr + 0.5)) %>% 
+  dplyr::filter(fleet > 0) %>% 
+  dplyr::select_if(is.numeric) #remove columns with notes
+  
+
+waa_std_df <- waa_std_df_raw %>% 
+  mutate(year = case_when(seas == 1 ~ number_yr + 0.0,
+                          seas == 2 ~ number_yr + 0.5)) %>% 
+  dplyr::filter(fleet > 0) %>% 
+  dplyr::select_if(is.numeric) #remove cols  with notes
+
+waa_f1 <- waa_df %>% dplyr::filter(fleet == 1)
+waa_f2 <- waa_df %>% dplyr::filter(fleet == 2)
+waa_f3 <- waa_df %>% dplyr::filter(fleet == 3)
+waa_f4 <- waa_df %>% dplyr::filter(fleet == 4)
+
+waa_sd_f1 <- waa_std_df %>% dplyr::filter(fleet == 1)
+waa_sd_f2 <- waa_std_df %>% dplyr::filter(fleet == 2)
+waa_sd_f3 <- waa_std_df %>% dplyr::filter(fleet == 3)
+waa_sd_f4 <- waa_std_df %>% dplyr::filter(fleet == 4)
 
 
 # Set up TMB data ----------------------------------------
 
-# Number of projection years
-n_proj_years <- 3
-
-# Years
-years <- waa_df$year
-
-# Ages (goes from age 3 - 15+)
-ages <- parse_number(colnames(waa_df)[-1])
-
-# Read in data weight at age matrix
-X_at <- t(as.matrix(waa_df[,-1])) # removing first col (year column)
-
-# Create projection columns (append to X_at matrix)
-proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years) 
-
-# Append NA for projection year
-X_at <- cbind(X_at, proj_cols) 
-
-# Read in standard deviations for weight at age matrix
-Xse_at <- t(as.matrix(waa_std_df[,c(-1)])) # removing first col (year column) 
-
-# Convert to CV
-Xcv_at <- sqrt( (exp(Xse_at^2) - 1) )
-
-# Now convert back to sd in lognormal space
-Xsd_at <- sqrt((log((Xcv_at)^2 + 1))/(log(10)^2))
-
-# Create an index for ages and years to feed into TMB, which helps construct the precision matrix
-ay_Index <- as.matrix(expand.grid("age" = seq_len(length(ages)), 
-                                  "year" = seq_len(length(years) + n_proj_years) ))
-
-
-# Set up TMB Model --------------------------------------------------------
-
-# Now, input these components into a data list
-data <- list( years = years,
+TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
+{
+  # Number of projection years
+  n_proj_years <- proj_yrs
+  
+  # Years
+  years <- waa_df$year
+  
+  # Ages (goes from age 3 - 15+)
+  ages <- str_extract_all(names(waa_df), '[0-9]+') %>% 
+    unlist() %>% as.numeric()
+  
+  # Read in data weight at age matrix
+  X_at <- waa_df %>% 
+    select(starts_with("x")) %>% #keep only age cols
+    t() 
+  
+  # Create projection columns (append to X_at matrix)
+  proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years) 
+  
+  # Append NA for projection year
+  X_at <- cbind(X_at, proj_cols) 
+  
+  # Read in standard deviations for weight at age matrix
+  Xse_at <- waa_std_df %>% 
+    select(starts_with("x")) %>% #keep only age cols
+    t() 
+  
+  # Convert to CV
+  Xcv_at <- sqrt( (exp(Xse_at^2) - 1) )
+  
+  # Now convert back to sd in lognormal space
+  Xsd_at <- sqrt((log((Xcv_at)^2 + 1))/(log(10)^2))
+  
+  # Create an index for ages and years to feed into TMB, which helps construct the precision matrix
+  ay_Index <- as.matrix(expand.grid("age" = seq_len(length(ages)), #CIA: does age need to be age - 1?? CHECK
+                                    "year" = seq_len(length(years) + n_proj_years) ))
+  
+  return(list(years = years,
               ages = ages,
               X_at = X_at,
               Xsd_at = Xsd_at,
               ay_Index = ay_Index,
-              n_proj_years = n_proj_years,
-              Var_Param = 0) # Var_Param == 0 Conditional, == 1 Marginal
+              n_proj_years = n_proj_years ))
+}
+
+
+
+# Set up TMB Model --------------------------------------------------------
+
+dat_setup_f4 <- TMB_setup(proj_yrs = 2,      # this is proj time steps (2 in this code = 2 seasons, aka 1 year)
+                          waa_df = waa_f4, 
+                          waa_std_df = waa_sd_f4)
+
+dat_setup_f4$Var_Param <- 0
+
+# Now, input these components into a data list
+data <- dat_setup_f4
+  # list( years = years,
+  #             ages = ages,
+  #             X_at = X_at,
+  #             Xsd_at = Xsd_at,
+  #             ay_Index = ay_Index,
+  #             n_proj_years = n_proj_years, # proj time: 2 seasons = 1 year in sardine model
+  #             Var_Param = 0) # Var_Param == 0 Conditional, == 1 Marginal
 
 # Input parameters into a list
 parameters <- list( rho_y = 0,
