@@ -1,6 +1,10 @@
 # Purpose: To validate triple separable GMRF models for EBS pollock 
 # Creator: Matthew LH. Cheng (UAF - CFOS)
 # Date 1/19/23
+# 
+# Modified: Caitlin Allen Akselrud 12.12.23
+# contact: caitlin.allen_akselrud@noaa.gov
+# Notes: set up for 2024 sardine benchmark assessment; run this code last
 
 
 #' Title Returns marginal AIC for TMB models

@@ -2,7 +2,10 @@
 # cohort/age/year effects for EBS pollock w/ conditional variance
 # Creator: Matthew LH. Cheng (UAF-CFOS)
 # Date 1/16/23
-
+# 
+# Modified: Caitlin Allen Akselrud 12.12.23
+# contact: caitlin.allen_akselrud@noaa.gov
+# Notes: set up for 2024 sardine benchmark assessment; run this code first
 # Set up ------------------------------------------------------------------
 
 library(here)
