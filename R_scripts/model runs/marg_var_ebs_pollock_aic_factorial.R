@@ -126,7 +126,7 @@ for(n_fact in 1:nrow(map_factorial)) {
   # Now, make AD model function
   waa_model <- MakeADFun(data = data, parameters = parameters,
                          map = map, random = "ln_Y_at",
-                         DLL = "GMRF_WAA")
+                         DLL = "GMRF_WAA", silent = FALSE)
   
   # Now, optimize the function
   waa_optim <- stats::nlminb(waa_model$par, waa_model$fn, waa_model$gr,  
