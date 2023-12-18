@@ -149,6 +149,12 @@ TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
               n_proj_years = n_proj_years ))
 }
 
+get_params_Y_at <- function(dat_in)
+{
+  yat <- array(0,dim=dim(dat_in$X_at))
+  return(yat)
+}
+
 fact_design <- function(y = 0:1, c = 0:1, a = 0:1)
 {
   # Generate full factorial design
@@ -273,7 +279,7 @@ for(i in 1:n_fleets)
                          ln_alpha = log(3.5e-7), # Start alpha at a reasonable space 
                          # Starting value for alpha derived from a run where none of the rhos were estimated.
                          ln_beta = log(3), # Fix at isometric
-                         ln_Y_at = array(0,dim=dim(data_in$X_at))) 
+                         ln_Y_at =  get_params_Y_at(data_in))
   
   
   # * run conditional model -------------------------------------------------
@@ -288,19 +294,48 @@ for(i in 1:n_fleets)
 
 # marginal model ----------------------------------------------------------
 
-data_in$Var_Param <- 1
-
 # * run marginal model ----------------------------------------------------
 
-models_marg <- run_model(map_factorial = model_fact, 
-                    n.newton = newton_steps, 
-                    data = data_in, 
-                    parameters = parameters_in)
+# CA: doesn't converge for fleet 2 or 3
 
-save(models_marg, file = here("output", paste0(model_name, fleet, "marg_var_waa_models.RData")))
+for(i in 1:n_fleets)
+{
+  fleet_name <- paste0("fleet",i,"_")
+  fleet_num <- i
+
+  waa_fleet <- get_fleet_dat(waa_dat = waa_df,
+                             waa_std_dat = waa_std_df,
+                             fleet_num = fleet_num)
+
+  dat_setup <- TMB_setup(proj_yrs = projection_time,      # this is proj time steps (2 in this code = 2 seasons, aka 1 year)
+                         waa_df = waa_fleet$dat,
+                         waa_std_df = waa_fleet$sd)
+
+  dat_setup$Var_Param <- 1
+
+  data_in <- dat_setup
+
+  parameters_in <- list( rho_y = 0,
+                         rho_a = 0,
+                         rho_c = 0,
+                         log_sigma2 = log(0.1), #
+                         ln_L0 = log(9), #first length bin sardine
+                         ln_Linf = log(28),  # last length bin for sardine
+                         ln_k = log(0.15),
+                         ln_alpha = log(3.5e-7), # Start alpha at a reasonable space
+                         # Starting value for alpha derived from a run where none of the rhos were estimated.
+                         ln_beta = log(3), # Fix at isometric
+                         ln_Y_at =  get_params_Y_at(data_in))
+
+  models_marg <- run_model(map_factorial = model_fact,
+                           n.newton = newton_steps,
+                           data = data_in,
+                           parameters = parameters_in)
+
+  save(models_marg, file = here("output", paste0(model_name, fleet_name, "marg_var_waa_models.RData")))
+}
 
 
 # model selection ---------------------------------------------------------
 
-models = models_marg
 
