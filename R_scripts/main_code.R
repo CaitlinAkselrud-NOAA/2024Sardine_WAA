@@ -449,25 +449,126 @@ for(i in 1:n_fleets)
 
 
 # model selection ---------------------------------------------------------
+get_model <- function(fleet_diag, model_fac)
+{
+  best_mod <- read_csv(here::here("output", fleet_diag)) %>% 
+    dplyr::filter(AIC == min(AIC)) %>% 
+    distinct(model) %>% 
+    mutate(rho_y = if_else(str_detect(model, "y"), 1, 0),
+           rho_c = if_else(str_detect(model, "c"), 1, 0),
+           rho_a = if_else(str_detect(model, "a"), 1, 0))
+  model_fac %<>% mutate(model_num = row_number())
+  mod_index <- inner_join(model_fac, best_mod)
+  return(mod_index$model_num)
+}  
 
+get_cond_waa <- function(fleet_index, cond_model, fleet_name, fleet_num, min_age, max_age, proj_t)
+{
+  proj_names = paste0("Proj_", seq(from = 1, to = proj_t, by = 1))
+  
+  fleet_waa <- cond_model[[fleet_index]]$sd_rep$par.random %>% 
+    matrix(nrow= 9) %>% 
+    exp()
+  rownames(fleet_waa) = paste0("age_", seq(from = min_age, to = max_age, by = 1))
+  colnames(fleet_waa) = c(cond_model[[fleet_index]]$env$data$years, proj_names)
+  
+  fleet_waa_ss <- fleet_waa %>%
+    t() %>%
+    as_tibble() %>% 
+    mutate(Yr = c(models_cond[[fleet_index]]$env$data$years, proj_names),
+           Seas = 1,
+           Sex = 1,
+           Bio_Pattern = 1,
+           BirthSeas = 1,
+           Fleet = 1,
+           comment = paste0("#wt_flt_", fleet_num)) %>%
+    relocate(Yr, Seas, Sex, Bio_Pattern, BirthSeas, Fleet)
+  
+  
+  write_csv(as.data.frame(fleet_waa), 
+            file = here::here("output", paste0(model_name, fleet_name, "_waa_output.csv")))
+  write_csv(fleet_waa_ss, 
+            file = here::here("output", paste0(model_name, fleet_name, "_waa_ss.csv")))
+  return(fleet_waa)
+}
+
+# * * fleet 1 -------------------------------------------------------------
 
 load(here("output", "2020_sardine_fleet1_cond_var_waa_models.RData"))
 get_diagnostics(fleet = 1, 
                 fleet_name = "fleet1", 
-                models = models_cond)
+                models = models_cond) 
 
+fleet1_index <- get_model(fleet_diag = "fleet1_model_diag_vals.csv",
+                        model_fac = model_fact)
+fleet1_waa <- get_cond_waa(fleet_index = fleet1_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet1",
+                           fleet_num = 1,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time)
+
+fleet1_waa %>% 
+  image()
+
+# CA: you are here: generate sd for each fleet; plots; input vs ouput comparisons for validation
+# CA: turn sd into fxn for all 3 fleets
+fleet1_waa_sd <- models_cond[[fleet1_index]]$sd_rep$diag.cov.random %>% 
+  matrix(nrow = 9)
+
+# CA: create working plot fxn for all fleets 
+p1 <- ggplot(fleet1_waa, aes(as.factor(Var1), Var2, group=Var2)) +
+  geom_tile(aes(fill = value)) +
+  scale_fill_gradient(low = "white", high = "red") 
+p1
+
+
+# cols = ages, rows = years
+# exp() log space
+
+# * * fleet 2 -------------------------------------------------------------
 
 load(here("output", "2020_sardine_fleet2_cond_var_waa_models.RData"))
 get_diagnostics(fleet = 2, 
                 fleet_name = "fleet2", 
                 models = models_cond)
 
+fleet2_index <- get_model(fleet_diag = "fleet2_model_diag_vals.csv",
+                          model_fac = model_fact)
+fleet2_waa <- get_cond_waa(fleet_index = fleet2_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet2",
+                           fleet_num = 2,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time)
+
+fleet2_waa %>% image()
+
+# * * fleet 3 -------------------------------------------------------------
+
 load(here("output", "2020_sardine_fleet3_cond_var_waa_models.RData"))
 get_diagnostics(fleet = 3, 
                 fleet_name = "fleet3", 
                 models = models_cond)
+fleet3_index <- get_model(fleet_diag = "fleet3_model_diag_vals.csv",
+                          model_fac = model_fact)
+fleet3_waa <- get_cond_waa(fleet_index = fleet3_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet3",
+                           fleet_num = 3,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time)
+
+fleet3_waa %>% image()
+
+fleet3_waa_sd <- models_cond[[fleet3_index]]$sd_rep$diag.cov.random %>% 
+  matrix(nrow = 9)
 
 
-# select waa matrix -------------------------------------------------------
+# model checks ------------------------------------------------------------
 
+# CA: compare output to original input
 
