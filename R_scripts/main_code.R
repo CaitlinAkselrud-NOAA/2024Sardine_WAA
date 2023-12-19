@@ -76,9 +76,11 @@ overall_mean_WAA <- waa_df %>%
 
 # Fixed inputs ------------------------------------------------------------
 
-projection_time <- 2
+projection_time <- 9
+proj_yr_start <- 2015
 
-model_name <- "2020_sardine_"
+model_name <- "2024_sardine_"
+model_year <- 2024
 
 # * fleet setup ---------------------------------------------------------------
 n_fleets <- 3
@@ -241,7 +243,7 @@ margAIC <- function(optim_model) {
   return(margAIC)
 }
 
-get_diagnostics <- function(fleet, fleet_name, models)
+get_diagnostics <- function(fleet, fleet_name, model_name, models)
 {
   # Generate full factorial design for naming models
   map_factorial <- tidyr::crossing(rho_y = 0:1, rho_c = 0:1, rho_a = 0:1) %>% 
@@ -350,7 +352,7 @@ get_diagnostics <- function(fleet, fleet_name, models)
     left_join(wAIC %>% dplyr::select(wAIC, model), by = c("model"))
   
   # Output to csv
-  write.csv(model_diag_long, here::here("output", paste0(fleet_name, "_model_diag_vals.csv")))
+  write.csv(model_diag_long, here::here("output", paste0(model_name, fleet_name, "_model_diag_vals.csv")))
 }
 
 # conditional model -------------------------------------------------------
@@ -449,25 +451,217 @@ for(i in 1:n_fleets)
 
 
 # model selection ---------------------------------------------------------
+get_model <- function(fleet_diag, model_fac)
+{
+  best_mod <- read_csv(here::here("output", fleet_diag)) %>% 
+    dplyr::filter(AIC == min(AIC)) %>% 
+    distinct(model) %>% 
+    mutate(rho_y = if_else(str_detect(model, "y"), 1, 0),
+           rho_c = if_else(str_detect(model, "c"), 1, 0),
+           rho_a = if_else(str_detect(model, "a"), 1, 0))
+  model_fac %<>% mutate(model_num = row_number())
+  mod_index <- inner_join(model_fac, best_mod)
+  return(mod_index$model_num)
+}  
 
+get_cond_waa <- function(fleet_index, cond_model, fleet_name, fleet_num, min_age, max_age, proj_t, proj_yr)
+{
+  proj_names = paste0("Proj_", seq(from = proj_yr, to = proj_yr+proj_t-1, by = 1))
+  
+  fleet_waa <- cond_model[[fleet_index]]$sd_rep$par.random %>% 
+    matrix(nrow= 9) %>% 
+    exp()
+  rownames(fleet_waa) = paste0("age_", seq(from = min_age, to = max_age, by = 1))
+  colnames(fleet_waa) = c(cond_model[[fleet_index]]$env$data$years, proj_names)
+  
+  fleet_waa_ss <- fleet_waa %>%
+    t() %>%
+    as_tibble() %>% 
+    mutate(Yr = c(models_cond[[fleet_index]]$env$data$years, proj_names),
+           Seas = 1,
+           Sex = 1,
+           Bio_Pattern = 1,
+           BirthSeas = 1,
+           Fleet = 1,
+           comment = paste0("#wt_flt_", fleet_num)) %>%
+    relocate(Yr, Seas, Sex, Bio_Pattern, BirthSeas, Fleet)
+  
+  heatmap(fleet_waa, 
+          Rowv = NA, Colv = NA,
+          main = paste("Fleet", fleet_num, "conditional weight-at-age"))
+  
+  write_csv(as.data.frame(fleet_waa), 
+            file = here::here("output", paste0(model_name, fleet_name, "_waa_output.csv")))
+  write_csv(fleet_waa_ss, 
+            file = here::here("output", paste0(model_name, fleet_name, "_waa_ss.csv")))
+  return(fleet_waa)
+}
 
-load(here("output", "2020_sardine_fleet1_cond_var_waa_models.RData"))
+get_cond_waa_sd <- function(fleet_index, cond_model, fleet_name, fleet_num, min_age, max_age, proj_t, proj_yr)
+{
+  proj_names = paste0("Proj_", seq(from = proj_yr, to = proj_yr+proj_t-1, by = 1))
+  fleet_waa_sd <- cond_model[[fleet_index]]$sd_rep$diag.cov.random %>% 
+    matrix(nrow = 9)
+  rownames(fleet_waa_sd) = paste0("age_", seq(from = min_age, to = max_age, by = 1))
+  colnames(fleet_waa_sd) = c(cond_model[[fleet_index]]$env$data$years, proj_names)
+  
+  heatmap(fleet_waa_sd, 
+          Rowv = NA, Colv = NA,
+          main = paste("Fleet", fleet_num, "standard dev"))
+  write_csv(as.data.frame(fleet_waa_sd), 
+            file = here::here("output", paste0(model_name, fleet_name, "_waa_sd_output.csv")))
+  return(fleet_waa_sd)
+}
+# * * fleet 1 -------------------------------------------------------------
+
+load(here("output", paste0(model_year, "_sardine_fleet1_cond_var_waa_models.RData")))
 get_diagnostics(fleet = 1, 
-                fleet_name = "fleet1", 
-                models = models_cond)
+                fleet_name = "fleet1",
+                model_name = model_name,
+                models = models_cond) 
+
+fleet1_index <- get_model(fleet_diag = paste0(model_year, "_sardine_fleet1_model_diag_vals.csv"),
+                        model_fac = model_fact)
+fleet1_waa <- get_cond_waa(fleet_index = fleet1_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet1",
+                           fleet_num = 1,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time,
+                           proj_yr = proj_yr_start)
+
+# heatmap(fleet1_waa, Rowv = NA, Colv = NA)
+
+# * std dev
+fleet1_waa_sd <- get_cond_waa_sd(fleet_index = fleet1_index,
+                                 cond_model = models_cond,
+                                 fleet_name = "fleet1",
+                                 fleet_num = 1,
+                                 min_age = 0,
+                                 max_age = 8,
+                                 proj_t = projection_time,
+                                 proj_yr = proj_yr_start)
+  
+
+# CA: you are here: plots; input vs ouput comparisons for validation
+# CA: create working plot fxn for all fleets 
 
 
-load(here("output", "2020_sardine_fleet2_cond_var_waa_models.RData"))
+# cols = ages, rows = years
+# exp() log space
+
+# * * fleet 2 -------------------------------------------------------------
+
+load(here("output", paste0(model_year, "_sardine_fleet2_cond_var_waa_models.RData")))
 get_diagnostics(fleet = 2, 
-                fleet_name = "fleet2", 
+                fleet_name = "fleet2",
+                model_name = model_name,
                 models = models_cond)
 
-load(here("output", "2020_sardine_fleet3_cond_var_waa_models.RData"))
+fleet2_index <- get_model(fleet_diag = paste0(model_year, "_sardine_fleet2_model_diag_vals.csv"),
+                          model_fac = model_fact)
+fleet2_waa <- get_cond_waa(fleet_index = fleet2_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet2",
+                           fleet_num = 2,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time,
+                           proj_yr = proj_yr_start)
+
+# * sd
+fleet2_waa_sd <- get_cond_waa_sd(fleet_index = fleet2_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet2",
+                           fleet_num = 2,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time,
+                           proj_yr = proj_yr_start)
+
+# fleet2_waa %>% image()
+
+# * * fleet 3 -------------------------------------------------------------
+
+load(here("output", paste0(model_year, "_sardine_fleet3_cond_var_waa_models.RData")))
 get_diagnostics(fleet = 3, 
-                fleet_name = "fleet3", 
+                fleet_name = "fleet3",
+                model_name = model_name,
                 models = models_cond)
+fleet3_index <- get_model(fleet_diag = paste0(model_year, "_sardine_fleet3_model_diag_vals.csv"),
+                          model_fac = model_fact)
+fleet3_waa <- get_cond_waa(fleet_index = fleet3_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet3",
+                           fleet_num = 3,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time,
+                           proj_yr = proj_yr_start)
+# * sd
+fleet3_waa_sd <- get_cond_waa_sd(fleet_index = fleet3_index,
+                           cond_model = models_cond,
+                           fleet_name = "fleet3",
+                           fleet_num = 3,
+                           min_age = 0,
+                           max_age = 8,
+                           proj_t = projection_time,
+                           proj_yr = proj_yr_start)
+
+# fleet3_waa %>% image()
+
+# fleet3_waa_sd <- models_cond[[fleet3_index]]$sd_rep$diag.cov.random %>% 
+#   matrix(nrow = 9)
 
 
-# select waa matrix -------------------------------------------------------
+# model checks ------------------------------------------------------------
 
+# CA: compare output to original input
+# fleet1_waa --> model waa
+# waa_df --> orig waa (all fleets)
 
+compare_waa <- function(orig_dat, model_dat, n_proj, fleet_name, model_name)
+{
+  orig_dat %<>% dplyr::select(-fleet, -year) %>% t()
+  rownames(orig_dat) = rownames(model_dat)
+  colnames(orig_dat) = colnames(model_dat)[1:(length(colnames(model_dat))-n_proj)]
+  
+  comp <- orig_dat - model_dat[,1:(length(colnames(model_dat))-n_proj)]
+  # heatmap(comp, Rowv = NA, Colv = NA)
+  dat_comp <- comp %>% 
+    as_tibble %>% 
+    rownames_to_column("Age") %>% 
+    mutate(Age = as.numeric(Age) -1) %>% 
+    pivot_longer(-Age, names_to = "Year", values_to = "waa")
+  
+  p_comp <- ggplot(dat_comp, aes(Age, Year)) +
+    geom_tile(aes(fill = waa)) +
+    geom_text(aes( #label=formatC(waa, format = "e"))) +
+      label = round(waa, 3))) +
+    scale_fill_gradient(low = "white", high = "cadetblue") +
+    theme_bw() +
+    labs(title = paste("Difference in waa:", fleet_name), 
+         subtitle = "Original data vs selected model")
+  ggsave(filename = here::here("output", paste0(model_name = model_name, fleet_name, "diff_obsv_pred_waa.png")), 
+         width = 10, height = 10)
+  return(comp)
+}
+
+f1_compare <- compare_waa(orig_dat = (waa_df %>% dplyr::filter(fleet == 1)),
+                          model_dat = fleet1_waa,
+                          n_proj = projection_time,
+                          fleet_name = "fleet1", 
+                          model_name = model_name)
+
+f2_compare <- compare_waa(orig_dat = (waa_df %>% dplyr::filter(fleet == 2)),
+                          model_dat = fleet2_waa,
+                          n_proj = projection_time,
+                          fleet_name = "fleet2", 
+                          model_name = model_name)
+
+f3_compare <- compare_waa(orig_dat = (waa_df %>% dplyr::filter(fleet == 3)),
+                          model_dat = fleet3_waa,
+                          n_proj = projection_time,
+                          fleet_name = "fleet3", 
+                          model_name = model_name)
