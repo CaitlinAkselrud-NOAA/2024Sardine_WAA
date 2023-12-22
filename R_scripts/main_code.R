@@ -63,15 +63,15 @@ waa_std_df <- waa_std_df_raw %>%
 
 # Fill NA values ----------------------------------------------------------
 # CA: updated 20.12.2023 to not fill NAs
-rpl_sd <- rep(1.111, times = length(names(waa_df)))
-names(rpl_sd) <- names(waa_df)
-
-waa_std_df %<>%
-  replace_na(as.list(rpl_sd))
-# waa filled in by fleet inside get_fleet_dat fxn
-overall_mean_WAA <- waa_df %>%
-  colMeans(na.rm = T) %>%
-  as.list()
+# rpl_sd <- rep(1.111, times = length(names(waa_df)))
+# names(rpl_sd) <- names(waa_df)
+# 
+# waa_std_df %<>%
+#   replace_na(as.list(rpl_sd))
+# # waa filled in by fleet inside get_fleet_dat fxn
+# overall_mean_WAA <- waa_df %>%
+#   colMeans(na.rm = T) %>%
+#   as.list()
 
 # Fixed inputs ------------------------------------------------------------
 
@@ -140,12 +140,57 @@ borrow_data <- function(waa_dat, waa_std_dat, fleet_num_add, fleet_num_borrow, r
   
   waa_std_f = waa_std_dat %>% 
     dplyr::filter(fleet == fleet_num) %>% 
-    dplyr::select(-all_of(all_na)) %>% 
+    dplyr::select(-all_of(all_na)) %>%
     mutate(rpl_sd_f)
   
   return(list(dat = waa_f, sd = waa_std_f))
 }
 
+# TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
+# {
+#   # Number of projection years
+#   n_proj_years <- proj_yrs
+#   
+#   # Years
+#   years <- waa_df$year
+#   
+#   # Ages (goes from age 3 - 15+)
+#   ages <- str_extract_all(names(waa_df), '[0-9]+') %>% 
+#     unlist() %>% as.numeric()
+#   
+#   # Read in data weight at age matrix
+#   X_at <- waa_df %>% 
+#     select(starts_with("x")) %>% #keep only age cols
+#     t() 
+#   
+#   # Create projection columns (append to X_at matrix)
+#   proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years) 
+#   
+#   # Append NA for projection year
+#   X_at <- cbind(X_at, proj_cols) 
+#   
+#   # Read in standard deviations for weight at age matrix
+#   Xse_at <- waa_std_df %>% 
+#     select(starts_with("x")) %>% #keep only age cols
+#     t() 
+#   
+#   # Convert to CV
+#   Xcv_at <- sqrt( (exp(Xse_at^2) - 1) )
+#   
+#   # Now convert back to sd in lognormal space
+#   Xsd_at <- sqrt((log((Xcv_at)^2 + 1))/(log(10)^2))
+#   
+#   # Create an index for ages and years to feed into TMB, which helps construct the precision matrix
+#   ay_Index <- as.matrix(expand.grid("age" = seq_len(length(ages)), #CIA: does age need to be age - 1?? CHECK
+#                                     "year" = seq_len(length(years) + n_proj_years) ))
+#   
+#   return(list(years = years,
+#               ages = ages,
+#               X_at = X_at,
+#               Xsd_at = Xsd_at,
+#               ay_Index = ay_Index,
+#               n_proj_years = n_proj_years ))
+# }
 TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
 {
   # Number of projection years
@@ -155,30 +200,32 @@ TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
   years <- waa_df$year
   
   # Ages (goes from age 3 - 15+)
-  ages <- str_extract_all(names(waa_df), '[0-9]+') %>% 
+  ages <- str_extract_all(names(waa_df), '[0-9]+') %>%
     unlist() %>% as.numeric()
   
-  # Read in data weight at age matrix
-  X_at <- waa_df %>% 
-    select(starts_with("x")) %>% #keep only age cols
-    t() 
-  
   # Create projection columns (append to X_at matrix)
-  proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years) 
-  
-  # Append NA for projection year
-  X_at <- cbind(X_at, proj_cols) 
+  proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years)
   
   # Read in standard deviations for weight at age matrix
-  Xse_at <- waa_std_df %>% 
+  Xse_at <- waa_std_df %>%
     select(starts_with("x")) %>% #keep only age cols
-    t() 
+    t()
   
   # Convert to CV
   Xcv_at <- sqrt( (exp(Xse_at^2) - 1) )
   
   # Now convert back to sd in lognormal space
   Xsd_at <- sqrt((log((Xcv_at)^2 + 1))/(log(10)^2))
+  Xsd_at <- cbind(Xsd_at, proj_cols) # append NAs for projection
+  
+  # Read in data weight at age matrix
+  X_at <- waa_df %>%
+    select(starts_with("x")) %>% #keep only age cols
+    t()
+  
+  # Append NA for projection year
+  X_at <- cbind(X_at, proj_cols)
+  X_at[is.na(Xsd_at)] <- NA
   
   # Create an index for ages and years to feed into TMB, which helps construct the precision matrix
   ay_Index <- as.matrix(expand.grid("age" = seq_len(length(ages)), #CIA: does age need to be age - 1?? CHECK
@@ -413,25 +460,32 @@ for(i in 1:n_fleets)
   waa_fleet <- get_fleet_dat(waa_dat = waa_df,
                              waa_std_dat = waa_std_df,
                              fleet_num = fleet_num)
-  # if(i == 3)
-  # {
-  #   borrow <- c(1) # only mexcal s1, not both
-  #   waa_fleet <- borrow_data(waa_dat = waa_df,
-  #                            waa_std_dat = waa_std_df,
-  #                            fleet_num_add = fleet_num, 
-  #                            fleet_num_borrow = borrow,
-  #                            replace_by = "m", #m = overall mean; y = by year 
-  #                            sd_repl_value = 1.111)
-  #   waa_fleet$dat %<>% 
-  #     relocate(x0, .after = year)
-  #   waa_fleet$sd %<>% 
-  #     relocate(x0, .after = year)
-  # 
-  # }
+  if(i == 3)
+  {
+    borrow <- c(1) # only mexcal s1, not both
+    waa_fleet <- borrow_data(waa_dat = waa_df,
+                             waa_std_dat = waa_std_df,
+                             fleet_num_add = fleet_num,
+                             fleet_num_borrow = borrow,
+                             replace_by = "m", #m = overall mean; y = by year
+                             sd_repl_value = 1.111)
+    waa_fleet$dat %<>%
+      relocate(x0, .after = year)
+    waa_fleet$sd %<>%
+      relocate(x0, .after = year)
+
+  }
   
   dat_setup <- TMB_setup(proj_yrs = projection_time,      # this is proj time steps (2 in this code = 2 seasons, aka 1 year)
                          waa_df = waa_fleet$dat, 
                          waa_std_df = waa_fleet$sd)
+  
+  # dim check
+  check <- dim(dat_setup$X_at) == dim(dat_setup$Xsd_at)
+  if(check[1] == "FALSE" || check[2] == 'FALSE')
+  {
+    print("WARNING: matrix dimensions don't match, reconfig data setup")
+  }
   
   # set conditional variance
   dat_setup$Var_Param <- 0 # Var_Param == 0 Conditional, == 1 Marginal
@@ -443,7 +497,7 @@ for(i in 1:n_fleets)
   parameters_in <- list( rho_y = 0, 
                          rho_a = 0,
                          rho_c = 0,
-                         log_sigma2 = log(0.05), #
+                         log_sigma2 = log(0.03), #
                          ln_L0 = log(9), #first length bin sardine
                          ln_Linf = log(28),  # last length bin for sardine
                          ln_k = log(0.15),
@@ -738,9 +792,9 @@ mod_results <- bind_rows(f1_diag, f2_diag, f3_diag) %>%
   relocate(AIC, .before = dAIC) %>% 
   relocate(pd_Hess, .after = wAIC) %>% 
   gt()
-gtsave(data = mod_results, 
-       filename = "model_compare.png", 
-       path = here::here("output"))
+# gtsave(data = mod_results, 
+#        filename = "model_compare.png", 
+#        path = here::here("output"))
 
 mod1_results <- f1_diag %>%
   dplyr::select(-nlminb_conv, -max_grad_name, -max_grad, - fleet, -sd) %>% 
