@@ -204,7 +204,8 @@ Type objective_function<Type>::operator() ()
   // Evaluate WAA data likelihood
   for(int a = 0; a < X_at.rows(); a++) {
   for(int t = 0; t < X_at.cols(); t++) {
-    if( !isNA(X_at(a,t)) ){
+    //if( !isNA(X_at(a,t)) ){
+    if( !isNA(X_at(a,t)) || !isNA(Xsd_at(a,t)) ) {
       jnLL -= dnorm(ln_Y_at(a,t), log(X_at(a,t)), Xsd_at(a,t), true);
     } // if we are not doing projections
   } // t loop

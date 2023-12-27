@@ -14,7 +14,7 @@ library(TMB)
 library(cowplot)
 library(janitor)
 library(magrittr)
-
+library(gt)
 
 # Compile and load in model -----------------------------------------------
 
@@ -62,17 +62,16 @@ waa_std_df <- waa_std_df_raw %>%
 
 
 # Fill NA values ----------------------------------------------------------
-
-rpl_sd <- rep(1.111, times = length(names(waa_df)))
-names(rpl_sd) <- names(waa_df)
-
-waa_std_df %<>% 
-  replace_na(as.list(rpl_sd))
-
-# waa filled in by fleet inside get_fleet_dat fxn
-overall_mean_WAA <- waa_df %>%
-  colMeans(na.rm = T) %>% 
-  as.list()
+# CA: updated 20.12.2023 to not fill NAs
+# rpl_sd <- rep(1.111, times = length(names(waa_df)))
+# names(rpl_sd) <- names(waa_df)
+# 
+# waa_std_df %<>%
+#   replace_na(as.list(rpl_sd))
+# # waa filled in by fleet inside get_fleet_dat fxn
+# overall_mean_WAA <- waa_df %>%
+#   colMeans(na.rm = T) %>%
+#   as.list()
 
 # Fixed inputs ------------------------------------------------------------
 
@@ -93,18 +92,105 @@ newton_steps = 3
 get_fleet_dat <- function(waa_dat, waa_std_dat, fleet_num)
 {
   waa_f <- waa_dat %>% dplyr::filter(fleet == fleet_num)
-  mean_WAA <- waa_f %>%
-    colMeans(na.rm = T) %>% 
-    as.list()
-  waa_f %<>%
-    replace_na(mean_WAA)
-  waa_f %<>%
-    replace_na(overall_mean_WAA) #if there is no fleet-specific mean, fill with overall mean
+  # mean_WAA <- waa_f %>%
+  #   colMeans(na.rm = T) %>%
+  #   as.list()
+  # waa_f %<>%
+  #   replace_na(mean_WAA)
+  # waa_f %<>%
+  #   replace_na(overall_mean_WAA) #if there is no fleet-specific mean, fill with overall mean
   
   waa_std_f = waa_std_dat %>% dplyr::filter(fleet == fleet_num)
   return(list(dat = waa_f, sd = waa_std_f))
 }
 
+borrow_data <- function(waa_dat, waa_std_dat, fleet_num_add, fleet_num_borrow, replace_by = "m", sd_repl_value = 1.111)
+{
+  waa_f <- waa_dat %>% dplyr::filter(fleet == fleet_num_add)
+  if(replace_by == "y") #by year
+  {
+    waa_borrow <- waa_dat %>% 
+      dplyr::filter(fleet %in% fleet_num_borrow) %>% 
+      group_by(year) %>%
+      summarize_all(.funs = mean, na.rm=T)
+    all_na <- waa_f %>% keep(~all(is.na(.x))) %>% names
+    replace_c <- waa_borrow %>% dplyr::select(year, all_of(all_na)) %>% 
+      dplyr::filter(year %in% unique(waa_f$year))
+    waa_f %<>% dplyr::select(-all_of(all_na)) %>% 
+      full_join(replace_c)
+  }else if(replace_by == "m") #general mean
+  {
+    waa_borrow <- waa_dat %>% 
+      dplyr::filter(fleet %in% fleet_num_borrow) %>% 
+      summarize_all(.funs = mean, na.rm=T) %>% 
+      dplyr::select(-year)
+    all_na <- waa_f %>% keep(~all(is.na(.x))) %>% names
+    replace_c <- waa_borrow %>% dplyr::select(all_of(all_na))
+    waa_f %<>% dplyr::select(-all_of(all_na)) %>%
+      mutate(replace_c)
+  }
+  
+  rpl_sd <- rep(sd_repl_value, times = length(names(waa_f)))
+  names(rpl_sd) <- names(waa_df)
+  
+  rpl_sd_f <- waa_std_dat %>% 
+    dplyr::filter(fleet == fleet_num) %>% 
+    dplyr::select(all_of(all_na)) %>% 
+    replace_na(as.list(rpl_sd))
+  
+  waa_std_f = waa_std_dat %>% 
+    dplyr::filter(fleet == fleet_num) %>% 
+    dplyr::select(-all_of(all_na)) %>%
+    mutate(rpl_sd_f)
+  
+  return(list(dat = waa_f, sd = waa_std_f))
+}
+
+# TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
+# {
+#   # Number of projection years
+#   n_proj_years <- proj_yrs
+#   
+#   # Years
+#   years <- waa_df$year
+#   
+#   # Ages (goes from age 3 - 15+)
+#   ages <- str_extract_all(names(waa_df), '[0-9]+') %>% 
+#     unlist() %>% as.numeric()
+#   
+#   # Read in data weight at age matrix
+#   X_at <- waa_df %>% 
+#     select(starts_with("x")) %>% #keep only age cols
+#     t() 
+#   
+#   # Create projection columns (append to X_at matrix)
+#   proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years) 
+#   
+#   # Append NA for projection year
+#   X_at <- cbind(X_at, proj_cols) 
+#   
+#   # Read in standard deviations for weight at age matrix
+#   Xse_at <- waa_std_df %>% 
+#     select(starts_with("x")) %>% #keep only age cols
+#     t() 
+#   
+#   # Convert to CV
+#   Xcv_at <- sqrt( (exp(Xse_at^2) - 1) )
+#   
+#   # Now convert back to sd in lognormal space
+#   Xsd_at <- sqrt((log((Xcv_at)^2 + 1))/(log(10)^2))
+#   
+#   # Create an index for ages and years to feed into TMB, which helps construct the precision matrix
+#   ay_Index <- as.matrix(expand.grid("age" = seq_len(length(ages)), #CIA: does age need to be age - 1?? CHECK
+#                                     "year" = seq_len(length(years) + n_proj_years) ))
+#   
+#   return(list(years = years,
+#               ages = ages,
+#               X_at = X_at,
+#               Xsd_at = Xsd_at,
+#               ay_Index = ay_Index,
+#               n_proj_years = n_proj_years ))
+# }
 TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
 {
   # Number of projection years
@@ -114,30 +200,32 @@ TMB_setup <- function(proj_yrs = 2, waa_df, waa_std_df)
   years <- waa_df$year
   
   # Ages (goes from age 3 - 15+)
-  ages <- str_extract_all(names(waa_df), '[0-9]+') %>% 
+  ages <- str_extract_all(names(waa_df), '[0-9]+') %>%
     unlist() %>% as.numeric()
   
-  # Read in data weight at age matrix
-  X_at <- waa_df %>% 
-    select(starts_with("x")) %>% #keep only age cols
-    t() 
-  
   # Create projection columns (append to X_at matrix)
-  proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years) 
-  
-  # Append NA for projection year
-  X_at <- cbind(X_at, proj_cols) 
+  proj_cols <- matrix(NA, nrow = length(ages), ncol = n_proj_years)
   
   # Read in standard deviations for weight at age matrix
-  Xse_at <- waa_std_df %>% 
+  Xse_at <- waa_std_df %>%
     select(starts_with("x")) %>% #keep only age cols
-    t() 
+    t()
   
   # Convert to CV
   Xcv_at <- sqrt( (exp(Xse_at^2) - 1) )
   
   # Now convert back to sd in lognormal space
   Xsd_at <- sqrt((log((Xcv_at)^2 + 1))/(log(10)^2))
+  Xsd_at <- cbind(Xsd_at, proj_cols) # append NAs for projection
+  
+  # Read in data weight at age matrix
+  X_at <- waa_df %>%
+    select(starts_with("x")) %>% #keep only age cols
+    t()
+  
+  # Append NA for projection year
+  X_at <- cbind(X_at, proj_cols)
+  X_at[is.na(Xsd_at)] <- NA
   
   # Create an index for ages and years to feed into TMB, which helps construct the precision matrix
   ay_Index <- as.matrix(expand.grid("age" = seq_len(length(ages)), #CIA: does age need to be age - 1?? CHECK
@@ -325,7 +413,7 @@ get_diagnostics <- function(fleet, fleet_name, model_name, models)
   
   # Get SE values now
   model_se_long <- model_diag %>% 
-    dplyr::select(rho_a_sd, rho_y_sd, rho_c_sd, log_sigma2_sd) %>% 
+    dplyr::select(rho_a_sd, rho_c_sd, rho_y_sd, log_sigma2_sd) %>% 
     pivot_longer(cols = everything(),names_to = "sd",  values_to = "sd_val")
   
   # Now bind, these two together
@@ -353,6 +441,7 @@ get_diagnostics <- function(fleet, fleet_name, model_name, models)
   
   # Output to csv
   write.csv(model_diag_long, here::here("output", paste0(model_name, fleet_name, "_model_diag_vals.csv")))
+  return(model_diag_long)
 }
 
 # conditional model -------------------------------------------------------
@@ -371,10 +460,32 @@ for(i in 1:n_fleets)
   waa_fleet <- get_fleet_dat(waa_dat = waa_df,
                              waa_std_dat = waa_std_df,
                              fleet_num = fleet_num)
+  if(i == 3)
+  {
+    borrow <- c(1) # only mexcal s1, not both
+    waa_fleet <- borrow_data(waa_dat = waa_df,
+                             waa_std_dat = waa_std_df,
+                             fleet_num_add = fleet_num,
+                             fleet_num_borrow = borrow,
+                             replace_by = "m", #m = overall mean; y = by year
+                             sd_repl_value = 1.111)
+    waa_fleet$dat %<>%
+      relocate(x0, .after = year)
+    waa_fleet$sd %<>%
+      relocate(x0, .after = year)
+
+  }
   
   dat_setup <- TMB_setup(proj_yrs = projection_time,      # this is proj time steps (2 in this code = 2 seasons, aka 1 year)
                          waa_df = waa_fleet$dat, 
                          waa_std_df = waa_fleet$sd)
+  
+  # dim check
+  check <- dim(dat_setup$X_at) == dim(dat_setup$Xsd_at)
+  if(check[1] == "FALSE" || check[2] == 'FALSE')
+  {
+    print("WARNING: matrix dimensions don't match, reconfig data setup")
+  }
   
   # set conditional variance
   dat_setup$Var_Param <- 0 # Var_Param == 0 Conditional, == 1 Marginal
@@ -386,7 +497,7 @@ for(i in 1:n_fleets)
   parameters_in <- list( rho_y = 0, 
                          rho_a = 0,
                          rho_c = 0,
-                         log_sigma2 = log(0.1), #
+                         log_sigma2 = log(0.03), #
                          ln_L0 = log(9), #first length bin sardine
                          ln_Linf = log(28),  # last length bin for sardine
                          ln_k = log(0.15),
@@ -412,42 +523,42 @@ for(i in 1:n_fleets)
 
 # CA: doesn't converge for fleet 2 or 3
 
-for(i in 1:n_fleets)
-{
-  fleet_name <- paste0("fleet",i,"_")
-  fleet_num <- i
-
-  waa_fleet <- get_fleet_dat(waa_dat = waa_df,
-                             waa_std_dat = waa_std_df,
-                             fleet_num = fleet_num)
-
-  dat_setup <- TMB_setup(proj_yrs = projection_time,      # this is proj time steps (2 in this code = 2 seasons, aka 1 year)
-                         waa_df = waa_fleet$dat,
-                         waa_std_df = waa_fleet$sd)
-
-  dat_setup$Var_Param <- 1
-
-  data_in <- dat_setup
-
-  parameters_in <- list( rho_y = 0,
-                         rho_a = 0,
-                         rho_c = 0,
-                         log_sigma2 = log(0.1), #
-                         ln_L0 = log(9), #first length bin sardine
-                         ln_Linf = log(28),  # last length bin for sardine
-                         ln_k = log(0.15),
-                         ln_alpha = log(3.5e-7), # Start alpha at a reasonable space
-                         # Starting value for alpha derived from a run where none of the rhos were estimated.
-                         ln_beta = log(3), # Fix at isometric
-                         ln_Y_at =  get_params_Y_at(data_in))
-
-  models_marg <- run_model(map_factorial = model_fact,
-                           n.newton = newton_steps,
-                           data = data_in,
-                           parameters = parameters_in)
-
-  save(models_marg, file = here("output", paste0(model_name, fleet_name, "marg_var_waa_models.RData")))
-}
+# for(i in 1:n_fleets)
+# {
+#   fleet_name <- paste0("fleet",i,"_")
+#   fleet_num <- i
+# 
+#   waa_fleet <- get_fleet_dat(waa_dat = waa_df,
+#                              waa_std_dat = waa_std_df,
+#                              fleet_num = fleet_num)
+# 
+#   dat_setup <- TMB_setup(proj_yrs = projection_time,      # this is proj time steps (2 in this code = 2 seasons, aka 1 year)
+#                          waa_df = waa_fleet$dat,
+#                          waa_std_df = waa_fleet$sd)
+# 
+#   dat_setup$Var_Param <- 1
+# 
+#   data_in <- dat_setup
+# 
+#   parameters_in <- list( rho_y = 0,
+#                          rho_a = 0,
+#                          rho_c = 0,
+#                          log_sigma2 = log(0.1), #
+#                          ln_L0 = log(9), #first length bin sardine
+#                          ln_Linf = log(28),  # last length bin for sardine
+#                          ln_k = log(0.15),
+#                          ln_alpha = log(3.5e-7), # Start alpha at a reasonable space
+#                          # Starting value for alpha derived from a run where none of the rhos were estimated.
+#                          ln_beta = log(3), # Fix at isometric
+#                          ln_Y_at =  get_params_Y_at(data_in))
+# 
+#   models_marg <- run_model(map_factorial = model_fact,
+#                            n.newton = newton_steps,
+#                            data = data_in,
+#                            parameters = parameters_in)
+# 
+#   save(models_marg, file = here("output", paste0(model_name, fleet_name, "marg_var_waa_models.RData")))
+# }
 
 
 # model selection ---------------------------------------------------------
@@ -515,13 +626,13 @@ get_cond_waa_sd <- function(fleet_index, cond_model, fleet_name, fleet_num, min_
 # * * fleet 1 -------------------------------------------------------------
 
 load(here("output", paste0(model_year, "_sardine_fleet1_cond_var_waa_models.RData")))
-get_diagnostics(fleet = 1, 
-                fleet_name = "fleet1",
-                model_name = model_name,
-                models = models_cond) 
+f1_diag <- get_diagnostics(fleet = 1, 
+                           fleet_name = "fleet1",
+                           model_name = model_name,
+                           models = models_cond) 
 
 fleet1_index <- get_model(fleet_diag = paste0(model_year, "_sardine_fleet1_model_diag_vals.csv"),
-                        model_fac = model_fact)
+                          model_fac = model_fact)
 fleet1_waa <- get_cond_waa(fleet_index = fleet1_index,
                            cond_model = models_cond,
                            fleet_name = "fleet1",
@@ -542,7 +653,7 @@ fleet1_waa_sd <- get_cond_waa_sd(fleet_index = fleet1_index,
                                  max_age = 8,
                                  proj_t = projection_time,
                                  proj_yr = proj_yr_start)
-  
+
 
 # CA: you are here: plots; input vs ouput comparisons for validation
 # CA: create working plot fxn for all fleets 
@@ -554,10 +665,10 @@ fleet1_waa_sd <- get_cond_waa_sd(fleet_index = fleet1_index,
 # * * fleet 2 -------------------------------------------------------------
 
 load(here("output", paste0(model_year, "_sardine_fleet2_cond_var_waa_models.RData")))
-get_diagnostics(fleet = 2, 
-                fleet_name = "fleet2",
-                model_name = model_name,
-                models = models_cond)
+f2_diag <- get_diagnostics(fleet = 2, 
+                           fleet_name = "fleet2",
+                           model_name = model_name,
+                           models = models_cond)
 
 fleet2_index <- get_model(fleet_diag = paste0(model_year, "_sardine_fleet2_model_diag_vals.csv"),
                           model_fac = model_fact)
@@ -572,23 +683,23 @@ fleet2_waa <- get_cond_waa(fleet_index = fleet2_index,
 
 # * sd
 fleet2_waa_sd <- get_cond_waa_sd(fleet_index = fleet2_index,
-                           cond_model = models_cond,
-                           fleet_name = "fleet2",
-                           fleet_num = 2,
-                           min_age = 0,
-                           max_age = 8,
-                           proj_t = projection_time,
-                           proj_yr = proj_yr_start)
+                                 cond_model = models_cond,
+                                 fleet_name = "fleet2",
+                                 fleet_num = 2,
+                                 min_age = 0,
+                                 max_age = 8,
+                                 proj_t = projection_time,
+                                 proj_yr = proj_yr_start)
 
 # fleet2_waa %>% image()
 
 # * * fleet 3 -------------------------------------------------------------
 
 load(here("output", paste0(model_year, "_sardine_fleet3_cond_var_waa_models.RData")))
-get_diagnostics(fleet = 3, 
-                fleet_name = "fleet3",
-                model_name = model_name,
-                models = models_cond)
+f3_diag <- get_diagnostics(fleet = 3, 
+                           fleet_name = "fleet3",
+                           model_name = model_name,
+                           models = models_cond)
 fleet3_index <- get_model(fleet_diag = paste0(model_year, "_sardine_fleet3_model_diag_vals.csv"),
                           model_fac = model_fact)
 fleet3_waa <- get_cond_waa(fleet_index = fleet3_index,
@@ -601,13 +712,13 @@ fleet3_waa <- get_cond_waa(fleet_index = fleet3_index,
                            proj_yr = proj_yr_start)
 # * sd
 fleet3_waa_sd <- get_cond_waa_sd(fleet_index = fleet3_index,
-                           cond_model = models_cond,
-                           fleet_name = "fleet3",
-                           fleet_num = 3,
-                           min_age = 0,
-                           max_age = 8,
-                           proj_t = projection_time,
-                           proj_yr = proj_yr_start)
+                                 cond_model = models_cond,
+                                 fleet_name = "fleet3",
+                                 fleet_num = 3,
+                                 min_age = 0,
+                                 max_age = 8,
+                                 proj_t = projection_time,
+                                 proj_yr = proj_yr_start)
 
 # fleet3_waa %>% image()
 
@@ -665,3 +776,102 @@ f3_compare <- compare_waa(orig_dat = (waa_df %>% dplyr::filter(fleet == 3)),
                           n_proj = projection_time,
                           fleet_name = "fleet3", 
                           model_name = model_name)
+
+
+# additional output -------------------------------------------------------
+
+# tables:
+# 1 model diag values as table (arrange by min AIC) for each fleet
+f1_diag %<>% mutate(fleet = "Fleet 1")
+f2_diag %<>% mutate(fleet = "Fleet 2")
+f3_diag %<>% mutate(fleet = "Fleet 3")
+mod_results <- bind_rows(f1_diag, f2_diag, f3_diag) %>%
+  dplyr::select(-nlminb_conv, -max_grad_name, -max_grad) %>% 
+  group_by(fleet) %>%
+  arrange(min(wAIC)) %>% 
+  relocate(AIC, .before = dAIC) %>% 
+  relocate(pd_Hess, .after = wAIC) %>% 
+  gt()
+# gtsave(data = mod_results, 
+#        filename = "model_compare.png", 
+#        path = here::here("output"))
+
+mod1_results <- f1_diag %>%
+  dplyr::select(-nlminb_conv, -max_grad_name, -max_grad, - fleet, -sd) %>% 
+  arrange(min(wAIC)) %>% 
+  relocate(AIC, .before = dAIC) %>% 
+  relocate(pd_Hess, .after = wAIC) %>% 
+  gt() %>% 
+  tab_header(
+    title = "Fleet 1",
+    subtitle = "Factorial model results"
+  ) %>% 
+  cols_label(
+    model = "Model",
+    parameters = "Parameter",
+    mle_val = "Parameter estimate",
+    sd_val = "Standard deviation",
+    lwr_95 = "95 CI lower",
+    upr_95 = "95 CI upper",
+    pd_Hess = "pos-def Hessian"
+  )
+
+mod2_results <- f2_diag %>%
+  dplyr::select(-nlminb_conv, -max_grad_name, -max_grad, - fleet, -sd) %>% 
+  arrange(min(wAIC)) %>% 
+  relocate(AIC, .before = dAIC) %>% 
+  relocate(pd_Hess, .after = wAIC) %>% 
+  gt() %>% 
+  tab_header(
+    title = "Fleet 2",
+    subtitle = "Factorial model results"
+  ) %>% 
+  cols_label(
+    model = "Model",
+    parameters = "Parameter",
+    mle_val = "Parameter estimate",
+    sd_val = "Standard deviation",
+    lwr_95 = "95 CI lower",
+    upr_95 = "95 CI upper",
+    pd_Hess = "pos-def Hessian"
+  )
+
+mod3_results <- f3_diag %>%
+  dplyr::select(-nlminb_conv, -max_grad_name, -max_grad, - fleet, -sd) %>% 
+  arrange(min(wAIC)) %>% 
+  relocate(AIC, .before = dAIC) %>% 
+  relocate(pd_Hess, .after = wAIC) %>% 
+  gt() %>% 
+  tab_header(
+    title = "Fleet 3",
+    subtitle = "Factorial model results"
+  ) %>% 
+  cols_label(
+    model = "Model",
+    parameters = "Parameter",
+    mle_val = "Parameter estimate",
+    sd_val = "Standard deviation",
+    lwr_95 = "95 CI lower",
+    upr_95 = "95 CI upper",
+    pd_Hess = "pos-def Hessian"
+  )
+
+gtsave(data = mod1_results, 
+       filename = "model_compare_f1.png", 
+       path = here::here("output"))
+
+gtsave(data = mod2_results, 
+       filename = "model_compare_f2.png", 
+       path = here::here("output"))
+
+gtsave(data = mod3_results, 
+       filename = "model_compare_f3.png", 
+       path = here::here("output"))
+
+
+# 2 waa and waa sd by fleet for selected model
+# 3 diff btw 2020 benchmark wt at age and new
+
+# plots
+# WAA heatmaps for each fleet 
+# SD heatmaps for each fleet
