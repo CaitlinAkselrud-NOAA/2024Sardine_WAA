@@ -593,7 +593,7 @@ get_cond_waa <- function(fleet_index, cond_model, fleet_name, fleet_num, min_age
            Sex = 1,
            Bio_Pattern = 1,
            BirthSeas = 1,
-           Fleet = 1,
+           Fleet = fleet_num,
            comment = paste0("#wt_flt_", fleet_num)) %>%
     relocate(Yr, Seas, Sex, Bio_Pattern, BirthSeas, Fleet)
   
