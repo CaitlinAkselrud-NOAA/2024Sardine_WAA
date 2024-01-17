@@ -23,13 +23,13 @@ compile(here("src","GMRF_WAA.cpp"))
 dyn.load(dynlib(here("src","GMRF_WAA")))
 
 # Data --------------------------------------------------------------------
-
+# FISHERY DATA
 # Load in WAA matrix
-waa_df_raw <- read_csv(here("data", "sardine_fishery_waa_kg.csv")) %>% 
+waa_df_raw <- read_csv(here("data", "sardine_fishery_waa_kg.csv")) %>%
   janitor::clean_names()
 
 # Load in std for WAA matrix
-waa_std_df_raw <- read_csv(here("data", "sardine_fishery_waa_kg_sd.csv")) %>% 
+waa_std_df_raw <- read_csv(here("data", "sardine_fishery_waa_kg_sd.csv")) %>%
   janitor::clean_names()
 
 # clean data
@@ -61,6 +61,27 @@ waa_std_df <- waa_std_df_raw %>%
   dplyr::select_if(is.numeric) #remove cols  with notes
 
 
+# data (survey) -----------------------------------------------------------
+
+# SURVEY DATA
+# Load in WAA matrix
+waa_df_raw <- read_csv(here("data", "2024_survey_waa.csv")) %>% 
+  janitor::clean_names()
+
+# Load in std for WAA matrix
+waa_std_df_raw <- read_csv(here("data", "2024_survey_waa_sd.csv")) %>% 
+  janitor::clean_names() 
+  
+waa_df <- waa_df_raw %>% 
+  rename(year = yr) %>% 
+  dplyr::select(-seas, -sex, -bio_pattern, -birth_seas) %>% 
+  mutate(fleet = 1)
+
+waa_std_df <- waa_std_df_raw %>% 
+  rename(year = yr) %>% 
+  dplyr::select(-seas, -sex, -bio_pattern, -birth_seas) %>% 
+  mutate(fleet = 1)
+
 # Fill NA values ----------------------------------------------------------
 # CA: updated 20.12.2023 to not fill NAs
 # rpl_sd <- rep(1.111, times = length(names(waa_df)))
@@ -75,14 +96,14 @@ waa_std_df <- waa_std_df_raw %>%
 
 # Fixed inputs ------------------------------------------------------------
 
-projection_time <- 9
-proj_yr_start <- 2015
+projection_time <- 2 #fishery: 9
+proj_yr_start <- 2021 #fishery: 2015
 
 model_name <- "2024_sardine_"
 model_year <- 2024
 
 # * fleet setup ---------------------------------------------------------------
-n_fleets <- 3
+n_fleets <- 1 # fishery: 3
 
 # * other model settings --------------------------------------------------
 
@@ -455,6 +476,7 @@ model_fact <- fact_design(y = 0:1,
 for(i in 1:n_fleets)
 {
   fleet_name <- paste0("fleet",i,"_")
+  fleet_name <- paste0("survey_")
   fleet_num <- i
   
   waa_fleet <- get_fleet_dat(waa_dat = waa_df,
@@ -580,7 +602,7 @@ get_cond_waa <- function(fleet_index, cond_model, fleet_name, fleet_num, min_age
   proj_names = paste0("Proj_", seq(from = proj_yr, to = proj_yr+proj_t-1, by = 1))
   
   fleet_waa <- cond_model[[fleet_index]]$sd_rep$par.random %>% 
-    matrix(nrow= 9) %>% 
+    matrix(nrow= (max_age - min_age +1)) %>% 
     exp()
   rownames(fleet_waa) = paste0("age_", seq(from = min_age, to = max_age, by = 1))
   colnames(fleet_waa) = c(cond_model[[fleet_index]]$env$data$years, proj_names)
@@ -612,7 +634,7 @@ get_cond_waa_sd <- function(fleet_index, cond_model, fleet_name, fleet_num, min_
 {
   proj_names = paste0("Proj_", seq(from = proj_yr, to = proj_yr+proj_t-1, by = 1))
   fleet_waa_sd <- cond_model[[fleet_index]]$sd_rep$diag.cov.random %>% 
-    matrix(nrow = 9)
+    matrix(nrow = (max_age - min_age +1))
   rownames(fleet_waa_sd) = paste0("age_", seq(from = min_age, to = max_age, by = 1))
   colnames(fleet_waa_sd) = c(cond_model[[fleet_index]]$env$data$years, proj_names)
   
@@ -725,7 +747,32 @@ fleet3_waa_sd <- get_cond_waa_sd(fleet_index = fleet3_index,
 # fleet3_waa_sd <- models_cond[[fleet3_index]]$sd_rep$diag.cov.random %>% 
 #   matrix(nrow = 9)
 
+# * * survey -------------------------------------------------------------
 
+load(here("output", paste0(model_year, "_sardine_survey_cond_var_waa_models.RData")))
+surv_diag <- get_diagnostics(fleet = -1, 
+                           fleet_name = "survey",
+                           model_name = model_name,
+                           models = models_cond)
+surv_index <- get_model(fleet_diag = paste0(model_year, "_sardine_survey_model_diag_vals.csv"),
+                          model_fac = model_fact)
+surv_waa <- get_cond_waa(fleet_index = surv_index,
+                           cond_model = models_cond,
+                           fleet_name = "survey",
+                           fleet_num = -1,
+                           min_age = 0,
+                           max_age = 10,
+                           proj_t = projection_time,
+                           proj_yr = proj_yr_start)
+# * sd
+surv_waa_sd <- get_cond_waa_sd(fleet_index = surv_index,
+                                 cond_model = models_cond,
+                                 fleet_name = "survey",
+                                 fleet_num = -1,
+                                 min_age = 0,
+                                 max_age = 10,
+                                 proj_t = projection_time,
+                                 proj_yr = proj_yr_start)
 # model checks ------------------------------------------------------------
 
 # CA: compare output to original input
@@ -777,7 +824,11 @@ f3_compare <- compare_waa(orig_dat = (waa_df %>% dplyr::filter(fleet == 3)),
                           fleet_name = "fleet3", 
                           model_name = model_name)
 
-
+surv_compare <- compare_waa(orig_dat = (waa_df),
+                          model_dat = surv_waa,
+                          n_proj = projection_time,
+                          fleet_name = "survey", 
+                          model_name = model_name)
 # additional output -------------------------------------------------------
 
 # tables:
